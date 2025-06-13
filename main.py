@@ -1,17 +1,29 @@
-from sklearn.metrics import mean_squared_error
+from scipy.ndimage import uniform_filter1d
+from sklearn.metrics import mean_squared_error, mean_absolute_error
+from config import get_config
 
 import numpy as np
 from scipy.signal import butter, filtfilt
 from scipy.fft import fft, fftfreq
 
-def bandpass_filter(signal, fs, lowcut=0.1, highcut=0.7, order=4):
+
+
+def smoothing(signal):
+    ma_window=3
+    signal= signal - uniform_filter1d(signal, size=ma_window, axis=0, mode='nearest')
+    long_window = int(10 * fs)  # e.g., 2s * 50Hz = 100 samples
+    smoothed= uniform_filter1d(signal, size=long_window, axis=0, mode='nearest')
+
+    return smoothed
+
+def bandpass_filter(signal, fs, lowcut, highcut, order=4):
     nyq = 0.5 * fs
     low = lowcut / nyq
     high = highcut / nyq
     b, a = butter(order, [low, high], btype='band')
     return filtfilt(b, a, signal)
 
-def estimate_rr_from_imu(imu_signal, fs, window_sec=10):
+def estimate_rr_from_imu(config, imu_signal, fs, window_sec=10):
 
     window_size = window_sec * fs    
     
@@ -22,10 +34,12 @@ def estimate_rr_from_imu(imu_signal, fs, window_sec=10):
         end = start + window_size
         if end > total_len:
             break
-        print('end:', end)
-        segment = imu_signal[start:end]
 
-        segment = bandpass_filter(segment, fs)
+        segment = imu_signal[start:end]
+        
+        if config.bp:
+            segment = bandpass_filter(segment, fs, config.lowcut, config.highcut)
+            
         # Step 2: FFT
         N = len(segment)
         freqs = fftfreq(N, 1/fs)
@@ -41,7 +55,7 @@ def estimate_rr_from_imu(imu_signal, fs, window_sec=10):
 
         # Find index of peak in FFT band
         peak_idx = np.argmax(fft_band)
-        print('p:', peak_idx)
+        
         # Use neighboring bins for parabolic interpolation
         # rr_bpm = get_rr_bpm_by_parabolic_interpolation(peak_idx, freqs_band, fft_band)
         rr_bpm = get_rr_bpm_by_max(freqs_band, fft_band)
@@ -124,6 +138,8 @@ for line in open(raw_IMU_path):
         continue
     
     accelx = float(splits[0])
+    
+
     accely = float(splits[1])
     accelz = float(splits[2])
     gyrox = float(splits[3])
@@ -151,6 +167,16 @@ gyroX_list = gyroX_list[:thres]
 gyroY_list = gyroY_list[:thres]
 gyroZ_list = gyroZ_list[:thres]
 
+
+
+config=get_config()
+    
+#apply moving average to accelX
+if config.smoothing:
+    accelX_list=smoothing(accelX_list)
+
+
+
 # imu_signal=np.asarray(imu_signal)
 
 # imu_signal=np.linalg.norm(imu_signal,axis=1)
@@ -161,20 +187,20 @@ gyroZ_list = gyroZ_list[:thres]
 # Step 1: Bandpass filter
 
 
-accelx_rr_estimates = estimate_rr_from_imu(accelX_list, fs)
-accely_rr_estimates = estimate_rr_from_imu(accelY_list, fs)
-accelz_rr_estimates = estimate_rr_from_imu(accelZ_list, fs)
-gyrox_rr_estimates = estimate_rr_from_imu(gyroX_list, fs)
-gyroy_rr_estimates = estimate_rr_from_imu(gyroY_list, fs)
-gyroz_rr_estimates = estimate_rr_from_imu(gyroZ_list, fs)
+accelx_rr_estimates = estimate_rr_from_imu(config ,accelX_list, fs)
+accely_rr_estimates = estimate_rr_from_imu(config, accelY_list, fs)
+accelz_rr_estimates = estimate_rr_from_imu(config, accelZ_list, fs)
+gyrox_rr_estimates = estimate_rr_from_imu(config, gyroX_list, fs)
+gyroy_rr_estimates = estimate_rr_from_imu(config, gyroY_list, fs)
+gyroz_rr_estimates = estimate_rr_from_imu(config, gyroZ_list, fs)
 
 
-accelx_rr_estimates = estimate_rr_from_imu(accelX_list, fs)
-accely_rr_estimates = estimate_rr_from_imu(accelY_list, fs)
-accelz_rr_estimates = estimate_rr_from_imu(accelZ_list, fs)
-gyrox_rr_estimates = estimate_rr_from_imu(gyroX_list, fs)
-gyroy_rr_estimates = estimate_rr_from_imu(gyroY_list, fs)
-gyroz_rr_estimates = estimate_rr_from_imu(gyroZ_list, fs)
+accelx_rr_estimates = estimate_rr_from_imu(config, accelX_list, fs)
+accely_rr_estimates = estimate_rr_from_imu(config, accelY_list, fs)
+accelz_rr_estimates = estimate_rr_from_imu(config, accelZ_list, fs)
+gyrox_rr_estimates = estimate_rr_from_imu(config, gyroX_list, fs)
+gyroy_rr_estimates = estimate_rr_from_imu(config, gyroY_list, fs)
+gyroz_rr_estimates = estimate_rr_from_imu(config, gyroZ_list, fs)
 
 
 time_points = np.arange(0, 50, 10)
@@ -209,6 +235,7 @@ gyrox_r_squared = r_squared(RR_GT_list, gyrox_rr_estimates)
 gyroy_r_squared = r_squared(RR_GT_list, gyroy_rr_estimates)
 gyroz_r_squared = r_squared(RR_GT_list, gyroz_rr_estimates)
 
+
 print('accelx mse:', accelx_mse)
 print('accely mse:', accely_mse)
 print('accelz mse:', accelz_mse)
@@ -232,17 +259,18 @@ from sklearn.linear_model import Ridge
 
 start=0
 
-k=3
+
 input_len=len(accelx_rr_estimates)//3
 
 target=0
+fold=0
 for i in range(0,30,10):
     train_data=[]
     train_label=[]
     test_data=[]
     test_label=[]
     clf = Ridge(alpha=0.1)
-
+    fold+=1    
     for j in range(0,len(accelx_rr_estimates),input_len):
         
         data=np.asarray(accelx_rr_estimates[j:j+input_len])
@@ -264,10 +292,15 @@ for i in range(0,30,10):
     clf.fit(train_data, train_label)
     pred = clf.predict(test_data)
     raw_mse = mean_squared_error(test_label, test_data)
+    raw_mae = mean_absolute_error(test_label, test_data)
     mse = mean_squared_error(test_label, pred)
-
-    print('mse:',mse)
+    mae = mean_absolute_error(test_label, pred)
+    print('=====Fold {0}====='.format(fold))
     print('raw mse:',raw_mse)
+    print('mse:',mse)
+    print('raw mae:', raw_mae)
+    print('mae:', mae)
+
 
 
 
