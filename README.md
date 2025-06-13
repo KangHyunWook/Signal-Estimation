@@ -1,3 +1,3 @@
-# NYUAD
+# NYUAD Project
 
-Ongoing project for respiratory rate estimation
+An ongoing project for respiratory rate estimation, collaborating with New York University, Abudhabi.
