@@ -1,3 +1,8 @@
+from matplotlib.lines import Line2D
+import matplotlib.pyplot as plt
+from sklearn.linear_model import Ridge
+from biosppy.signals import ecg
+from create_dataset import IMU, MIC
 from scipy.ndimage import uniform_filter1d
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 from config import get_config
@@ -6,12 +11,32 @@ import numpy as np
 from scipy.signal import butter, filtfilt
 from scipy.fft import fft, fftfreq
 
+#functions
+def get_heart_rate(ecg_signal, config):
+    # Example: Simulated ECG signal (you can replace this with your real ECG data)
+    # For real use, load ECG from a file (e.g., with numpy, pandas, or scipy)
+    sampling_rate = config.fs  # in Hz
+
+    # Simulated ECG-like signal (replace with your own signal)
+
+    # Step 1: Detect R-peaks
+    out = ecg.ecg(signal=ecg_signal, sampling_rate=sampling_rate, show=False)
+    r_peaks = out['rpeaks']  # indices of R-peaks
 
 
-def smoothing(signal):
+    # Step 2: Compute R-R intervals (in seconds)
+    r_peak_times = r_peaks / sampling_rate
+    rr_intervals = np.diff(r_peak_times)
+
+    # Step 3: Compute instantaneous heart rate (in bpm)
+    heart_rates = 60 / rr_intervals
+    
+    return r_peaks, rr_intervals, heart_rates
+
+def smoothing(signal, config):
     ma_window=3
     signal= signal - uniform_filter1d(signal, size=ma_window, axis=0, mode='nearest')
-    long_window = int(10 * fs)  # e.g., 2s * 50Hz = 100 samples
+    long_window = int(10 * config.fs)  # e.g., 2s * 50Hz = 100 samples
     smoothed= uniform_filter1d(signal, size=long_window, axis=0, mode='nearest')
 
     return smoothed
@@ -113,255 +138,367 @@ def get_rr_bpm_by_parabolic_interpolation(peak_idx, freqs_band, fft_band):
     
     return rr_bpm
 
+
+train_config = get_config()
+if 'imu' in train_config.dataset_dir.lower():
+    dataset=IMU(train_config)
+    train_config.fs = 50  # 50 Hz sampling rate
+    print('IMU')
+elif 'mic' in train_config.dataset_dir.lower():
+    dataset=MIC(train_config)
+    train_config.fs = 500
+    print('MIC')
+
+data=dataset.get_data()
+
+
 # Simulated IMU data (replace with your real signal)
 np.random.seed(42)
-fs = 50  # 50 Hz sampling rate
+
 duration = 300  # 5 minutes
 
 #todo: read raw IMU signal
+#evaluate
 
-raw_IMU_path=r"C:\workspace\NYUAD\raw_imu.csv"
-
-imu_signal=[]
-accelX_list=[]
-accelY_list=[]
-accelZ_list=[]
-gyroX_list=[]
-gyroY_list=[]
-gyroZ_list=[]
-
-for line in open(raw_IMU_path):
-    line=line.strip()
-    splits = line.split(',')    
+if 'imu' in train_config.dataset_dir.lower():
     
-    if splits[0]=='accelx':
-        continue
-    
-    accelx = float(splits[0])
-    
+    accelX_list=data[0]
+    accelY_list=data[1]
+    accelZ_list=data[2]
+    gyroX_list=data[3]
+    gyroY_list=data[4]
+    gyroZ_list=data[5]
 
-    accely = float(splits[1])
-    accelz = float(splits[2])
-    gyrox = float(splits[3])
-    gyroy = float(splits[4])
-    gyroz = float(splits[5])
-    
-    # imu_signal.append(np.array([splits[0],splits[1],splits[2], gyrox, gyroy, gyroz]))
-    # imu_signal.append(accely)
-    
-    accelX_list.append(accelx)
-    accelY_list.append(accely)
-    accelZ_list.append(accelz)
-    gyroX_list.append(gyrox)
-    gyroY_list.append(gyroy)
-    gyroZ_list.append(gyroz)
-
-
-thres=15000
-# print(len(accelX_list))
-# exit()
-accelX_list = accelX_list[:thres]
-accelY_list = accelY_list[:thres]
-accelZ_list = accelZ_list[:thres]
-gyroX_list = gyroX_list[:thres]
-gyroY_list = gyroY_list[:thres]
-gyroZ_list = gyroZ_list[:thres]
-
-
-
-config=get_config()
-    
-#apply moving average to accelX
-if config.smoothing:
-    accelX_list=smoothing(accelX_list)
-
-
-
-# imu_signal=np.asarray(imu_signal)
-
-# imu_signal=np.linalg.norm(imu_signal,axis=1)
-
-# imu_signal=list(imu_signal)
-
-
-# Step 1: Bandpass filter
-
-
-accelx_rr_estimates = estimate_rr_from_imu(config ,accelX_list, fs)
-accely_rr_estimates = estimate_rr_from_imu(config, accelY_list, fs)
-accelz_rr_estimates = estimate_rr_from_imu(config, accelZ_list, fs)
-gyrox_rr_estimates = estimate_rr_from_imu(config, gyroX_list, fs)
-gyroy_rr_estimates = estimate_rr_from_imu(config, gyroY_list, fs)
-gyroz_rr_estimates = estimate_rr_from_imu(config, gyroZ_list, fs)
-
-
-accelx_rr_estimates = estimate_rr_from_imu(config, accelX_list, fs)
-accely_rr_estimates = estimate_rr_from_imu(config, accelY_list, fs)
-accelz_rr_estimates = estimate_rr_from_imu(config, accelZ_list, fs)
-gyrox_rr_estimates = estimate_rr_from_imu(config, gyroX_list, fs)
-gyroy_rr_estimates = estimate_rr_from_imu(config, gyroY_list, fs)
-gyroz_rr_estimates = estimate_rr_from_imu(config, gyroZ_list, fs)
-
-
-time_points = np.arange(0, 50, 10)
-
-
-RR_GT_path=r"C:\workspace\NYUAD\RR_GT.csv"
-
-RR_GT_list=[]
-
-cnt=0
-for line in open(RR_GT_path):
-    line = line.strip()
-    splits = line.split(',')
-    if splits[0]=='time':
-        continue
-    if cnt<30:
-        RR_GT_list.append(float(splits[1]))
-    cnt+=1
-
-
-accelx_mse = mean_squared_error(RR_GT_list, accelx_rr_estimates)
-accely_mse = mean_squared_error(RR_GT_list, accely_rr_estimates)
-accelz_mse = mean_squared_error(RR_GT_list, accelz_rr_estimates)
-gyrox_mse = mean_squared_error(RR_GT_list, gyrox_rr_estimates)
-gyroy_mse = mean_squared_error(RR_GT_list, gyroy_rr_estimates)
-gyroz_mse = mean_squared_error(RR_GT_list, gyroz_rr_estimates)
-
-accelx_r_squared = r_squared(RR_GT_list, accelx_rr_estimates)
-accely_r_squared = r_squared(RR_GT_list, accely_rr_estimates)
-accelz_r_squared = r_squared(RR_GT_list, accelz_rr_estimates)
-gyrox_r_squared = r_squared(RR_GT_list, gyrox_rr_estimates)
-gyroy_r_squared = r_squared(RR_GT_list, gyroy_rr_estimates)
-gyroz_r_squared = r_squared(RR_GT_list, gyroz_rr_estimates)
-
-
-print('accelx mse:', accelx_mse)
-print('accely mse:', accely_mse)
-print('accelz mse:', accelz_mse)
-print('gyrox mse:', gyrox_mse)
-print('gyroy mse:', gyroy_mse)
-print('gyroz mse:', gyroz_mse)
-
-print('accelx r_squared:', accelx_r_squared)
-print('accely r_squared:', accely_r_squared)
-print('accelz r_squared:', accelz_r_squared)
-print('gyrox r_squared:', gyrox_r_squared)
-print('gyroy r_squared:', gyroy_r_squared)
-print('gyroz r_squared:', gyroz_r_squared)
-
-print(len(accelx_rr_estimates))
-
-train_len=int(len(accelx_rr_estimates)*0.7)
-print('l:', train_len)
-
-from sklearn.linear_model import Ridge
-
-start=0
-
-
-input_len=len(accelx_rr_estimates)//3
-
-target=0
-fold=0
-for i in range(0,30,10):
-    train_data=[]
-    train_label=[]
-    test_data=[]
-    test_label=[]
-    clf = Ridge(alpha=0.1)
-    fold+=1    
-    for j in range(0,len(accelx_rr_estimates),input_len):
         
-        data=np.asarray(accelx_rr_estimates[j:j+input_len])
-        label=np.asarray(RR_GT_list[j:j+input_len])
+    #apply moving average to accelX
+    if train_config.smoothing:
+        accelX_list=smoothing(accelX_list,train_config)
 
-        if i==j:
-            test_data.append(data)
-            test_label.append(label)
-        else:
-            train_data.append(data)
-            train_label.append(label)
 
-    test_data=np.asarray(test_data)
-    test_label =np.asarray(test_label)
 
-    train_data = np.asarray(train_data)    
-    train_label = np.asarray(train_label)
+    # imu_signal=np.asarray(imu_signal)
+
+    # imu_signal=np.linalg.norm(imu_signal,axis=1)
+
+    # imu_signal=list(imu_signal)
+
+
+    # Step 1: Bandpass filter
+
+    fs = train_config.fs
+    accelx_rr_estimates = estimate_rr_from_imu(train_config ,accelX_list, fs)
+    accely_rr_estimates = estimate_rr_from_imu(train_config, accelY_list, fs)
+    accelz_rr_estimates = estimate_rr_from_imu(train_config, accelZ_list, fs)
+    gyrox_rr_estimates = estimate_rr_from_imu(train_config, gyroX_list, fs)
+    gyroy_rr_estimates = estimate_rr_from_imu(train_config, gyroY_list, fs)
+    gyroz_rr_estimates = estimate_rr_from_imu(train_config, gyroZ_list, fs)
+
+
+    accelx_rr_estimates = estimate_rr_from_imu(train_config, accelX_list, fs)
+    accely_rr_estimates = estimate_rr_from_imu(train_config, accelY_list, fs)
+    accelz_rr_estimates = estimate_rr_from_imu(train_config, accelZ_list, fs)
+    gyrox_rr_estimates = estimate_rr_from_imu(train_config, gyroX_list, fs)
+    gyroy_rr_estimates = estimate_rr_from_imu(train_config, gyroY_list, fs)
+    gyroz_rr_estimates = estimate_rr_from_imu(train_config, gyroZ_list, fs)
+
+
+    time_points = np.arange(0, 50, 10)
+
+
+    RR_GT_path=r"C:\workspace\NYUAD\RR_GT.csv"
+
+    RR_GT_list=[]
+
+    cnt=0
+    for line in open(RR_GT_path):
+        line = line.strip()
+        splits = line.split(',')
+        if splits[0]=='time':
+            continue
+        if cnt<30:
+            RR_GT_list.append(float(splits[1]))
+        cnt+=1
+
+
+    accelx_mse = mean_squared_error(RR_GT_list, accelx_rr_estimates)
+    accely_mse = mean_squared_error(RR_GT_list, accely_rr_estimates)
+    accelz_mse = mean_squared_error(RR_GT_list, accelz_rr_estimates)
+    gyrox_mse = mean_squared_error(RR_GT_list, gyrox_rr_estimates)
+    gyroy_mse = mean_squared_error(RR_GT_list, gyroy_rr_estimates)
+    gyroz_mse = mean_squared_error(RR_GT_list, gyroz_rr_estimates)
+
+    accelx_r_squared = r_squared(RR_GT_list, accelx_rr_estimates)
+    accely_r_squared = r_squared(RR_GT_list, accely_rr_estimates)
+    accelz_r_squared = r_squared(RR_GT_list, accelz_rr_estimates)
+    gyrox_r_squared = r_squared(RR_GT_list, gyrox_rr_estimates)
+    gyroy_r_squared = r_squared(RR_GT_list, gyroy_rr_estimates)
+    gyroz_r_squared = r_squared(RR_GT_list, gyroz_rr_estimates)
+
+
+    print('accelx mse:', accelx_mse)
+    print('accely mse:', accely_mse)
+    print('accelz mse:', accelz_mse)
+    print('gyrox mse:', gyrox_mse)
+    print('gyroy mse:', gyroy_mse)
+    print('gyroz mse:', gyroz_mse)
+
+    print('accelx r_squared:', accelx_r_squared)
+    print('accely r_squared:', accely_r_squared)
+    print('accelz r_squared:', accelz_r_squared)
+    print('gyrox r_squared:', gyrox_r_squared)
+    print('gyroy r_squared:', gyroy_r_squared)
+    print('gyroz r_squared:', gyroz_r_squared)
+
+    print(len(accelx_rr_estimates))
+
+    train_len=int(len(accelx_rr_estimates)*0.7)
+    print('l:', train_len)
+
+
+
+    start=0
+
+
+    input_len=len(accelx_rr_estimates)//3
+
+    target=0
+    fold=0
+    maes=[]
+    for i in range(0,30,10):
+        train_data=[]
+        train_label=[]
+        test_data=[]
+        test_label=[]
+        clf = Ridge(alpha=0.1)
+        fold+=1    
+        for j in range(0,len(accelx_rr_estimates),input_len):
+            
+            data=np.asarray(accelx_rr_estimates[j:j+input_len])
+            label=np.asarray(RR_GT_list[j:j+input_len])
+
+            if i==j:
+                test_data.append(data)
+                test_label.append(label)
+            else:
+                train_data.append(data)
+                train_label.append(label)
+
+        test_data=np.asarray(test_data)
+        test_label =np.asarray(test_label)
+
+        train_data = np.asarray(train_data)    
+        train_label = np.asarray(train_label)
+        
+        clf.fit(train_data, train_label)
+        pred = clf.predict(test_data)
+        raw_mse = mean_squared_error(test_label, test_data)
+        raw_mae = mean_absolute_error(test_label, test_data)
+        mse = mean_squared_error(test_label, pred)
+        mae = mean_absolute_error(test_label, pred)
+        maes.append(mae)
+        print('=====Fold {0}====='.format(fold))
+        print('raw mse:',raw_mse)
+        print('mse:',mse)
+        print('raw mae:', raw_mae)
+        print('mae:', mae)
+
+    print('mean mae /std')
+    print(round(np.mean(maes),2), round(np.std(maes),2))
+
+
+
+    print(train_data.shape, test_data.shape)
+    print(train_label.shape, test_label.shape)
+    exit()
+
+
     
-    clf.fit(train_data, train_label)
-    pred = clf.predict(test_data)
-    raw_mse = mean_squared_error(test_label, test_data)
-    raw_mae = mean_absolute_error(test_label, test_data)
-    mse = mean_squared_error(test_label, pred)
-    mae = mean_absolute_error(test_label, pred)
-    print('=====Fold {0}====='.format(fold))
-    print('raw mse:',raw_mse)
-    print('mse:',mse)
-    print('raw mae:', raw_mae)
-    print('mae:', mae)
+
+    fig, axis = plt.subplots(2,3, figsize=(16,5))
+
+    axis[0,0].plot(time_points, RR_GT_list, label='RR GT',color='#1f77b4')
+    axis[0,0].plot(time_points, accelx_rr_estimates, label='RR esti.', color='#d62728')
+    axis[0,0].set_title('Estimation is from accelX')
+
+    axis[0,1].plot(time_points, RR_GT_list, label='RR GT', color='#1f77b4')
+    axis[0,1].plot(time_points, accely_rr_estimates, color='#d62728')
+    axis[0,1].set_title('Estimation is from accelY')
+
+    axis[0,2].plot(time_points, RR_GT_list, label='RR GT', color='#1f77b4')
+    axis[0,2].plot(time_points, accelz_rr_estimates, label='RR esti.', color='#d62728')
+    axis[0,2].set_title('Estimation is from accelZ')
+
+
+    axis[1,0].plot(time_points, RR_GT_list, label='RR GT', color='#1f77b4')
+    axis[1,0].plot(time_points, gyrox_rr_estimates, label='RR esti.', color='#d62728')
+    axis[1,0].set_title('Estimation is from gyroX')
+
+    axis[1,1].plot(time_points, RR_GT_list, label='RR GT', color='#1f77b4')
+    axis[1,1].plot(time_points, gyroy_rr_estimates, label='RR esti.', color='#d62728')
+    axis[1,1].set_title('Estimation is from gyroY')
+
+    axis[1,2].plot(time_points, RR_GT_list, label='RR GT', color='#1f77b4')
+    axis[1,2].plot(time_points, gyroz_rr_estimates, label='RR esti.', color='#d62728')
+    axis[1,2].set_title('Estimation is from gyroZ')
 
 
 
+    # Create custom legend lines with thickened lines
+    legend_lines = [Line2D([0], [0], color='#1f77b4', lw=5),   # Blue line in legend, thickened
+                    Line2D([0], [0], color='#d62728', lw=5)]  # Orange line in legend, thickened
 
+    plt.legend(handles=legend_lines, labels=['RR GT', 'RR esti.'], loc='upper right', handlelength=3, fontsize=10, bbox_to_anchor=(1.36,1))
 
-print(train_data.shape, test_data.shape)
-print(train_label.shape, test_label.shape)
-exit()
+    # axis[0,0].set_ylabel('Respiratory rate (RR) (beats per minute)')
 
+    fig.text(0.5, 0.5, 'Time (s)', ha='center', fontsize=12)  # For top row (0,x)
+    fig.text(0.5, 0.02, 'Time (s)', ha='center', fontsize=12)  # For bottom row (1,x)
 
-import matplotlib.pyplot as plt
+    # fig.text(0.1, 0.5, 'Respiratory rate (BPM)', va='center', rotation='vertical', fontsize=12)  # Shared y-label
 
-fig, axis = plt.subplots(2,3, figsize=(16,5))
+    fig.supylabel('Respiratory rate (BPM)')
 
-axis[0,0].plot(time_points, RR_GT_list, label='RR GT',color='#1f77b4')
-axis[0,0].plot(time_points, accelx_rr_estimates, label='RR esti.', color='#d62728')
-axis[0,0].set_title('Estimation is from accelX')
+    # plt.tight_layout(rect=[0.01, 0.01, 0.01, 0.95])  # Leave space on the left for y-label
 
-axis[0,1].plot(time_points, RR_GT_list, label='RR GT', color='#1f77b4')
-axis[0,1].plot(time_points, accely_rr_estimates, color='#d62728')
-axis[0,1].set_title('Estimation is from accelY')
+    plt.tight_layout(pad=2.0)
+    plt.savefig('rr.png')
+    plt.show()
+    print(len(time_points))
+    print(len(RR_GT_list))
 
-axis[0,2].plot(time_points, RR_GT_list, label='RR GT', color='#1f77b4')
-axis[0,2].plot(time_points, accelz_rr_estimates, label='RR esti.', color='#d62728')
-axis[0,2].set_title('Estimation is from accelZ')
+elif 'mic' in train_config.dataset_dir.lower():
+    
+    times=data[0]
+    sensors = data[1]
+    GTs=data[2]
+    
+    #slice sensors by 10 seconds
+    time_step=10*train_config.fs
+    print('len:', len(sensors))
+    
+    sensor_segments=[]
+    GT_segments=[]
+    for i in range(0,time_step*(len(sensors)//time_step), time_step):
+        print(i,i+time_step)
+        sensor_segment = sensors[i:i+time_step]
+        GT_segment = GTs[i:i+time_step]
 
+        sensor_segments.append(sensor_segment)
+        GT_segments.append(GT_segment)
 
-axis[1,0].plot(time_points, RR_GT_list, label='RR GT', color='#1f77b4')
-axis[1,0].plot(time_points, gyrox_rr_estimates, label='RR esti.', color='#d62728')
-axis[1,0].set_title('Estimation is from gyroX')
+    print('time:', len(times), len(sensors), len(GTs))
 
-axis[1,1].plot(time_points, RR_GT_list, label='RR GT', color='#1f77b4')
-axis[1,1].plot(time_points, gyroy_rr_estimates, label='RR esti.', color='#d62728')
-axis[1,1].set_title('Estimation is from gyroY')
+    heart_rate_labels=[]
+    for i in range(3):
+        print('======Fold {0}======'.format(i+1))
+        r_peaks, rr_intervals, heart_rates = get_heart_rate(GT_segments[i],train_config)
 
-axis[1,2].plot(time_points, RR_GT_list, label='RR GT', color='#1f77b4')
-axis[1,2].plot(time_points, gyroz_rr_estimates, label='RR esti.', color='#d62728')
-axis[1,2].set_title('Estimation is from gyroZ')
+        # Print results
+        print("R-peaks (indices):", r_peaks)
+        print("R-R intervals (s):", rr_intervals)
+        print("Heart rate (bpm):", heart_rates)
+        print('r_peaks:', len(r_peaks), len(heart_rates))
+        
+        print("Average heart rate:", np.mean(heart_rates))
+        print('len:', len(heart_rates))
+        heart_rate_labels.append(heart_rates[:13])
 
-from matplotlib.lines import Line2D
+    #train ridge regression with input sensor and label heart rates
+    clf = Ridge(alpha=0.1)
 
-# Create custom legend lines with thickened lines
-legend_lines = [Line2D([0], [0], color='#1f77b4', lw=5),   # Blue line in legend, thickened
-                Line2D([0], [0], color='#d62728', lw=5)]  # Orange line in legend, thickened
+    
+    #train and evaluate
+    fold=1
+    maes=[]
+    preds=[]
+    labels=[]
+    for i in range(3):        
+        train_X=[]
+        train_y=[]
+        test_X=[]
+        test_y=[]
+        for j in range(3):
+            current_sensor=sensor_segments[j]
+            current_heart_rate = heart_rate_labels[j]
+            if j==i:
+                test_X.append(current_sensor)
+                test_y.append(current_heart_rate)
+            else:
+                train_X.append(current_sensor)
+                train_y.append(current_heart_rate)
+        
+        train_X=np.asarray(train_X)
+        train_y=np.asarray(train_y)
+        test_X=np.asarray(test_X)
+        test_y=np.asarray(test_y)
 
-plt.legend(handles=legend_lines, labels=['RR GT', 'RR esti.'], loc='upper right', handlelength=3, fontsize=10, bbox_to_anchor=(1.36,1))
+        labels.append(test_y[0])
+        print(train_X.shape, train_y.shape)
+        print(test_X.shape, test_y.shape)
+        clf.fit(train_X, train_y)
+        pred = clf.predict(test_X)
+        # pred=pred[0]
 
-# axis[0,0].set_ylabel('Respiratory rate (RR) (beats per minute)')
+        preds.append(pred[0])
+        mse = mean_squared_error(test_y, pred)
+        # raw_mae=mean_absolute_error(test_y, test_X)
+        mae = mean_absolute_error(test_y, pred)
+        maes.append(mae)
+        print('=====Fold {0}====='.format(i+1))
+        print('mse:',mse)
+        print('mae:', mae)
+        # print('raw mae:', raw_mae)
+        
+    print('mean mae /std')
+    print(round(np.mean(maes),2), round(np.std(maes),2))
+    
 
-fig.text(0.5, 0.5, 'Time (s)', ha='center', fontsize=12)  # For top row (0,x)
-fig.text(0.5, 0.02, 'Time (s)', ha='center', fontsize=12)  # For bottom row (1,x)
+    
+    #plot heart rates
+    ecg_signal=GTs[:15000]
+    r_peaks, rr_intervals, heart_rates = get_heart_rate(ecg_signal,train_config)
+    fig, axes = plt.subplots(1,1, figsize=(13,3))
+    t=np.arange(len(heart_rates))
+    axes.plot(t, heart_rates)
+    plt.xticks([])
+    axes.set_ylabel('Heart rates (BPM)')
+    plt.tight_layout()
+    plt.savefig('hr.png')
+    plt.show()
+    
+    exit()
+    
+    fig, axes = plt.subplots(1,3, figsize=(13,3))
+    
+    
+    # #Optional: plot ECG with R-peaks
+    gap=0.8
+    for i in range(len(preds)):
+        t=np.arange(13)
+        axes[i].plot(t, preds[i], color='#1f77b4', label='Predictions')
+        axes[i].plot(t, labels[i], color='#d62728', label='Heart Rates')
+        axes[i].set_title(f'Fold {i+1}')
 
-# fig.text(0.1, 0.5, 'Respiratory rate (BPM)', va='center', rotation='vertical', fontsize=12)  # Shared y-label
+        axes[i].fill_between(t, preds[i] - gap, preds[i] + gap, color='#1f77b4', alpha=0.2)
+        axes[i].fill_between(t, labels[i] - gap, labels[i] + gap, color='#d62728', alpha=0.2)
+        
+    axes[1].set_xlabel('Indices')
+    axes[0].set_ylabel('Heart rate (BPM)')
+    
 
-fig.supylabel('Respiratory rate (BPM)')
+    fig.supxlabel('Predictions refer to the predicted hearts rates from Sensor for 10 seconds')
+    
+    legend_lines = [Line2D([0], [0], color='#1f77b4', lw=5),   # Blue line in legend, thickened
+                    Line2D([0], [0], color='#d62728', lw=5)]  # Orange line in legend, thickened
 
-# plt.tight_layout(rect=[0.01, 0.01, 0.01, 0.95])  # Leave space on the left for y-label
+    plt.legend(handles=legend_lines, labels=['Predictions', 'Heart Rates'], loc='upper right', handlelength=3, fontsize=10, bbox_to_anchor=(1.49,1))
+    
 
-plt.tight_layout(pad=2.0)
-plt.savefig('rr.png')
-plt.show()
-print(len(time_points))
-print(len(RR_GT_list))
+    plt.tight_layout()
+    # plt.tight_layout(rect=[0.01, 0.01, 0.01, 0.95])  # Leave space on the left for y-label
+    plt.savefig('fig.png')
+    
+    print('saved')
+    plt.show()
 
-# print(mse)
+    

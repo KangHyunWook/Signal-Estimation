@@ -3,7 +3,7 @@ import argparse
 def get_config(**optional_kwargs):
     parser = argparse.ArgumentParser()
     
-    parser.add_argument('--dataset_dir', default = r"C:\workspace\NYUAD\March10_Experimental Results\MIC_Heart Rate\HR_20250310_124933_1000gain_facingEarCanal.xlsx")
+    parser.add_argument('--dataset_dir', default = r"C:\workspace\NYUAD\MIC_1000gain_facingEarCanal.csv")
     parser.add_argument('--sampling_rate', type=int, default=1000)
     parser.add_argument('--mode', default='train')
     parser.add_argument('--smoothing', action='store_true')
