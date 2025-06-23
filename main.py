@@ -1,9 +1,10 @@
+from filtering import smoothing, triangle_filter
+
 from matplotlib.lines import Line2D
 import matplotlib.pyplot as plt
 from sklearn.linear_model import Ridge
 from biosppy.signals import ecg
 from create_dataset import IMU, MIC
-from scipy.ndimage import uniform_filter1d
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 from config import get_config
 
@@ -33,13 +34,6 @@ def get_heart_rate(ecg_signal, config):
     
     return r_peaks, rr_intervals, heart_rates
 
-def smoothing(signal, config):
-    ma_window=3
-    signal= signal - uniform_filter1d(signal, size=ma_window, axis=0, mode='nearest')
-    long_window = int(10 * config.fs)  # e.g., 2s * 50Hz = 100 samples
-    smoothed= uniform_filter1d(signal, size=long_window, axis=0, mode='nearest')
-
-    return smoothed
 
 def bandpass_filter(signal, fs, lowcut, highcut, order=4):
     nyq = 0.5 * fs
@@ -161,45 +155,47 @@ duration = 300  # 5 minutes
 #evaluate
 
 if 'imu' in train_config.dataset_dir.lower():
-    
-    accelX_list=data[0]
-    accelY_list=data[1]
-    accelZ_list=data[2]
-    gyroX_list=data[3]
-    gyroY_list=data[4]
-    gyroZ_list=data[5]
+    if train_config.axis==0:
+        signal = data[0]
+    elif train_config.axis==1:
+        signal = data[1]
+    elif train_config.axis==2:
+        signal = data[2]
+    elif train_config.axis==3:
+        signal = data[3]
+    elif train_config.axis==4:
+        signal = data[4]
+    elif train_config.axis==5:
+        signal = data[5]
+    elif train_config.axis==6:
+        pass #all
 
         
     #apply moving average to accelX
     if train_config.smoothing:
-        accelX_list=smoothing(accelX_list,train_config)
+        signal=smoothing(signal,train_config)
 
-
+    if train_config.triangle_filter:
+        signal = triangle_filter(signal, train_config)
+    
+    # if train_config.triangle_filter:
+        # accelX_l
 
     # imu_signal=np.asarray(imu_signal)
 
-    # imu_signal=np.linalg.norm(imu_signal,axis=1)
-
-    # imu_signal=list(imu_signal)
 
 
     # Step 1: Bandpass filter
 
     fs = train_config.fs
-    accelx_rr_estimates = estimate_rr_from_imu(train_config ,accelX_list, fs)
-    accely_rr_estimates = estimate_rr_from_imu(train_config, accelY_list, fs)
-    accelz_rr_estimates = estimate_rr_from_imu(train_config, accelZ_list, fs)
-    gyrox_rr_estimates = estimate_rr_from_imu(train_config, gyroX_list, fs)
-    gyroy_rr_estimates = estimate_rr_from_imu(train_config, gyroY_list, fs)
-    gyroz_rr_estimates = estimate_rr_from_imu(train_config, gyroZ_list, fs)
+    rr_estimates = estimate_rr_from_imu(train_config ,signal, fs)
+    # accely_rr_estimates = estimate_rr_from_imu(train_config, accelY_list, fs)
+    # accelz_rr_estimates = estimate_rr_from_imu(train_config, accelZ_list, fs)
+    # gyrox_rr_estimates = estimate_rr_from_imu(train_config, gyroX_list, fs)
+    # gyroy_rr_estimates = estimate_rr_from_imu(train_config, gyroY_list, fs)
+    # gyroz_rr_estimates = estimate_rr_from_imu(train_config, gyroZ_list, fs)
 
 
-    accelx_rr_estimates = estimate_rr_from_imu(train_config, accelX_list, fs)
-    accely_rr_estimates = estimate_rr_from_imu(train_config, accelY_list, fs)
-    accelz_rr_estimates = estimate_rr_from_imu(train_config, accelZ_list, fs)
-    gyrox_rr_estimates = estimate_rr_from_imu(train_config, gyroX_list, fs)
-    gyroy_rr_estimates = estimate_rr_from_imu(train_config, gyroY_list, fs)
-    gyroz_rr_estimates = estimate_rr_from_imu(train_config, gyroZ_list, fs)
 
 
     time_points = np.arange(0, 50, 10)
@@ -220,46 +216,21 @@ if 'imu' in train_config.dataset_dir.lower():
         cnt+=1
 
 
-    accelx_mse = mean_squared_error(RR_GT_list, accelx_rr_estimates)
-    accely_mse = mean_squared_error(RR_GT_list, accely_rr_estimates)
-    accelz_mse = mean_squared_error(RR_GT_list, accelz_rr_estimates)
-    gyrox_mse = mean_squared_error(RR_GT_list, gyrox_rr_estimates)
-    gyroy_mse = mean_squared_error(RR_GT_list, gyroy_rr_estimates)
-    gyroz_mse = mean_squared_error(RR_GT_list, gyroz_rr_estimates)
-
-    accelx_r_squared = r_squared(RR_GT_list, accelx_rr_estimates)
-    accely_r_squared = r_squared(RR_GT_list, accely_rr_estimates)
-    accelz_r_squared = r_squared(RR_GT_list, accelz_rr_estimates)
-    gyrox_r_squared = r_squared(RR_GT_list, gyrox_rr_estimates)
-    gyroy_r_squared = r_squared(RR_GT_list, gyroy_rr_estimates)
-    gyroz_r_squared = r_squared(RR_GT_list, gyroz_rr_estimates)
+    mse = mean_squared_error(RR_GT_list, rr_estimates)
+    r_squared = r_squared(RR_GT_list, rr_estimates)
 
 
-    print('accelx mse:', accelx_mse)
-    print('accely mse:', accely_mse)
-    print('accelz mse:', accelz_mse)
-    print('gyrox mse:', gyrox_mse)
-    print('gyroy mse:', gyroy_mse)
-    print('gyroz mse:', gyroz_mse)
+    print('axis {0} | MSE: {1}'.format(train_config.axis, mse))
+    print('r_squared:', r_squared)
 
-    print('accelx r_squared:', accelx_r_squared)
-    print('accely r_squared:', accely_r_squared)
-    print('accelz r_squared:', accelz_r_squared)
-    print('gyrox r_squared:', gyrox_r_squared)
-    print('gyroy r_squared:', gyroy_r_squared)
-    print('gyroz r_squared:', gyroz_r_squared)
-
-    print(len(accelx_rr_estimates))
-
-    train_len=int(len(accelx_rr_estimates)*0.7)
+    train_len=int(len(rr_estimates)*0.7)
     print('l:', train_len)
-
 
 
     start=0
 
 
-    input_len=len(accelx_rr_estimates)//3
+    input_len=len(rr_estimates)//3
 
     target=0
     fold=0
@@ -271,9 +242,9 @@ if 'imu' in train_config.dataset_dir.lower():
         test_label=[]
         clf = Ridge(alpha=0.1)
         fold+=1    
-        for j in range(0,len(accelx_rr_estimates),input_len):
+        for j in range(0,len(rr_estimates),input_len):
             
-            data=np.asarray(accelx_rr_estimates[j:j+input_len])
+            data=np.asarray(rr_estimates[j:j+input_len])
             label=np.asarray(RR_GT_list[j:j+input_len])
 
             if i==j:
@@ -303,10 +274,19 @@ if 'imu' in train_config.dataset_dir.lower():
         print('mae:', mae)
 
     print('mean mae /std')
-    print(round(np.mean(maes),2), round(np.std(maes),2))
+    mean_mae= round(np.mean(maes),2)
+    mean_std =round(np.std(maes),2)
+    print(round(np.mean(maes),2), mean_std)
 
 
+    with open('results.csv', train_config.w_mode) as f:
+        if train_config.w_mode=='w':
+            f.write('ma window, long window size, triangle size,  mean mae, mean std\n')
+        f.write(str(train_config.ma_window)+','+str(train_config.long_window_size)+','+str(train_config.triangle_w_size)+','+str(mean_mae)+','+str(mean_std)+'\n')
 
+    f.close()
+    
+    print('File written')
     print(train_data.shape, test_data.shape)
     print(train_label.shape, test_label.shape)
     exit()
