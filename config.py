@@ -19,5 +19,8 @@ def get_config(**optional_kwargs):
     parser.add_argument('--long_window_size', type=int, default=25)
     parser.add_argument('--triangle_w_size', type=int, default=2)
     parser.add_argument('--w_mode', type=str, default='w')
+    parser.add_argument('--estimator', required=True, type=str, default='FFT', help='Choice: FFT, Peak, Zero-crossing, hybrid')
+    parser.add_argument('--window_sec', type=int, default=10)
+    parser.add_argument('--adaptive_bp', action='store_true')
     
     return parser.parse_args()

@@ -4,6 +4,7 @@ from scipy.signal import convolve
 import numpy as np
 
 
+
 def smoothing(signal, config):
     ma_window=config.ma_window
     signal= signal - uniform_filter1d(signal, size=ma_window, axis=0, mode='nearest')

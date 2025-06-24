@@ -1,4 +1,4 @@
-from filtering import smoothing, triangle_filter
+from baselines import estimate_rr_fft, estimate_rr_peak_detection
 
 from matplotlib.lines import Line2D
 import matplotlib.pyplot as plt
@@ -9,7 +9,7 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error
 from config import get_config
 
 import numpy as np
-from scipy.signal import butter, filtfilt
+
 from scipy.fft import fft, fftfreq
 
 #functions
@@ -34,14 +34,6 @@ def get_heart_rate(ecg_signal, config):
     
     return r_peaks, rr_intervals, heart_rates
 
-
-def bandpass_filter(signal, fs, lowcut, highcut, order=4):
-    nyq = 0.5 * fs
-    low = lowcut / nyq
-    high = highcut / nyq
-    b, a = butter(order, [low, high], btype='band')
-    return filtfilt(b, a, signal)
-
 def estimate_rr_from_imu(config, imu_signal, fs, window_sec=10):
 
     window_size = window_sec * fs    
@@ -56,8 +48,8 @@ def estimate_rr_from_imu(config, imu_signal, fs, window_sec=10):
 
         segment = imu_signal[start:end]
         
-        if config.bp:
-            segment = bandpass_filter(segment, fs, config.lowcut, config.highcut)
+        # if config.bp:
+            # segment = bandpass_filter(segment, fs, config.lowcut, config.highcut)
             
         # Step 2: FFT
         N = len(segment)
@@ -171,36 +163,10 @@ if 'imu' in train_config.dataset_dir.lower():
         pass #all
 
         
-    #apply moving average to accelX
-    if train_config.smoothing:
-        signal=smoothing(signal,train_config)
 
     if train_config.triangle_filter:
         signal = triangle_filter(signal, train_config)
     
-    # if train_config.triangle_filter:
-        # accelX_l
-
-    # imu_signal=np.asarray(imu_signal)
-
-
-
-    # Step 1: Bandpass filter
-
-    fs = train_config.fs
-    rr_estimates = estimate_rr_from_imu(train_config ,signal, fs)
-    # accely_rr_estimates = estimate_rr_from_imu(train_config, accelY_list, fs)
-    # accelz_rr_estimates = estimate_rr_from_imu(train_config, accelZ_list, fs)
-    # gyrox_rr_estimates = estimate_rr_from_imu(train_config, gyroX_list, fs)
-    # gyroy_rr_estimates = estimate_rr_from_imu(train_config, gyroY_list, fs)
-    # gyroz_rr_estimates = estimate_rr_from_imu(train_config, gyroZ_list, fs)
-
-
-
-
-    time_points = np.arange(0, 50, 10)
-
-
     RR_GT_path=r"C:\workspace\NYUAD\RR_GT.csv"
 
     RR_GT_list=[]
@@ -214,7 +180,18 @@ if 'imu' in train_config.dataset_dir.lower():
         if cnt<30:
             RR_GT_list.append(float(splits[1]))
         cnt+=1
+    
 
+    if train_config.estimator=='FFT':
+        rr_estimates=estimate_rr_fft(signal, RR_GT_list, train_config)
+    elif train_config.estimator=='Peak':
+        rr_estimates=estimate_rr_peak_detection(signal, RR_GT_list, train_config)
+    else:
+        print('No such estimatory')
+        exit()
+
+
+    time_points = np.arange(0, 50, 10)
 
     mse = mean_squared_error(RR_GT_list, rr_estimates)
     r_squared = r_squared(RR_GT_list, rr_estimates)
@@ -234,6 +211,7 @@ if 'imu' in train_config.dataset_dir.lower():
 
     target=0
     fold=0
+    raw_maes=[]
     maes=[]
     for i in range(0,30,10):
         train_data=[]
@@ -264,6 +242,7 @@ if 'imu' in train_config.dataset_dir.lower():
         pred = clf.predict(test_data)
         raw_mse = mean_squared_error(test_label, test_data)
         raw_mae = mean_absolute_error(test_label, test_data)
+        raw_maes.append(raw_mae)
         mse = mean_squared_error(test_label, pred)
         mae = mean_absolute_error(test_label, pred)
         maes.append(mae)
@@ -274,8 +253,13 @@ if 'imu' in train_config.dataset_dir.lower():
         print('mae:', mae)
 
     print('mean mae /std')
+    mean_raw_mae = round(np.mean(raw_maes),2)
+    raw_mae_std = round(np.std(raw_maes), 2)
     mean_mae= round(np.mean(maes),2)
     mean_std =round(np.std(maes),2)
+    print('mean raw mae')
+    print(round(np.mean(raw_maes),2), raw_mae_std)
+    print('mean mae')
     print(round(np.mean(maes),2), mean_std)
 
 
