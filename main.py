@@ -1,5 +1,6 @@
-from baselines import estimate_rr_fft, estimate_rr_peak_detection
-
+from filtering import triangle_filter, compute_smoothed_hilbert
+from estimators import RR_Estimator
+from scipy.signal import find_peaks
 from matplotlib.lines import Line2D
 import matplotlib.pyplot as plt
 from sklearn.linear_model import Ridge
@@ -34,46 +35,7 @@ def get_heart_rate(ecg_signal, config):
     
     return r_peaks, rr_intervals, heart_rates
 
-def estimate_rr_from_imu(config, imu_signal, fs, window_sec=10):
 
-    window_size = window_sec * fs    
-    
-    total_len = len(imu_signal)
-    rr_estimates = []
-    
-    for start in range(0, total_len, window_size):
-        end = start + window_size
-        if end > total_len:
-            break
-
-        segment = imu_signal[start:end]
-        
-        # if config.bp:
-            # segment = bandpass_filter(segment, fs, config.lowcut, config.highcut)
-            
-        # Step 2: FFT
-        N = len(segment)
-        freqs = fftfreq(N, 1/fs)
-        fft_vals = np.abs(fft(segment))
-        
-        # Step 3: Focus on positive frequencies in respiration band (0.1–0.7 Hz)
-        
-        mask = (freqs >= 0.1) & (freqs <= 0.7)
-        
-        freqs_band = freqs[mask]
-        
-        fft_band = fft_vals[mask]
-
-        # Find index of peak in FFT band
-        peak_idx = np.argmax(fft_band)
-        
-        # Use neighboring bins for parabolic interpolation
-        # rr_bpm = get_rr_bpm_by_parabolic_interpolation(peak_idx, freqs_band, fft_band)
-        rr_bpm = get_rr_bpm_by_max(freqs_band, fft_band)
-        
-        rr_estimates.append(rr_bpm)
-
-    return rr_estimates
 
 def r_squared(y_true, y_pred):
     """
@@ -93,36 +55,7 @@ def r_squared(y_true, y_pred):
     ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)
 
     return 1 - (ss_res / ss_tot)
-
-
-def get_rr_bpm_by_max(freqs_band, fft_band):
-    # Step 4: Find peak frequency
-    if len(freqs_band) == 0:
-        rr_bpm = 0
-    else:
-        peak_freq = freqs_band[np.argmax(fft_band)]
-        rr_bpm = peak_freq * 60  # Convert Hz to breaths per minute (BPM)
-
-    return rr_bpm
     
-def get_rr_bpm_by_parabolic_interpolation(peak_idx, freqs_band, fft_band):
-
-    if 0 < peak_idx < len(fft_band) - 1:
-        y0, y1, y2 = fft_band[peak_idx - 1:peak_idx + 2]
-        denom = y0 - 2 * y1 + y2
-        if denom != 0:
-            delta = 0.5 * (y0 - y2) / denom
-            peak_freq = freqs_band[peak_idx] + delta * (freqs_band[1] - freqs_band[0])
-        else:
-            peak_freq = freqs_band[peak_idx]
-    else:
-        peak_freq = freqs_band[peak_idx]
-
-    print('peak freq:',  peak_freq)
-
-    rr_bpm = peak_freq * 60
-    
-    return rr_bpm
 
 
 train_config = get_config()
@@ -146,65 +79,27 @@ duration = 300  # 5 minutes
 #todo: read raw IMU signal
 #evaluate
 
-if 'imu' in train_config.dataset_dir.lower():
-    if train_config.axis==0:
-        signal = data[0]
-    elif train_config.axis==1:
-        signal = data[1]
-    elif train_config.axis==2:
-        signal = data[2]
-    elif train_config.axis==3:
-        signal = data[3]
-    elif train_config.axis==4:
-        signal = data[4]
-    elif train_config.axis==5:
-        signal = data[5]
-    elif train_config.axis==6:
-        pass #all
+def cross_domain_evaluate(imu_pattern2, GT_RR_list, GT_RR_predictor):
+    imu_pattern2=imu_pattern2[:5000]
+    np_imu_pattern2=np.asarray(imu_pattern2)
+    np_imu_pattern2=np_imu_pattern2.reshape(-1, 500)
 
-        
-
-    if train_config.triangle_filter:
-        signal = triangle_filter(signal, train_config)
+    GT_RR_predictions=GT_RR_predictor.predict(np_imu_pattern2)
     
-    RR_GT_path=r"C:\workspace\NYUAD\RR_GT.csv"
-
-    RR_GT_list=[]
-
-    cnt=0
-    for line in open(RR_GT_path):
-        line = line.strip()
-        splits = line.split(',')
-        if splits[0]=='time':
-            continue
-        if cnt<30:
-            RR_GT_list.append(float(splits[1]))
-        cnt+=1
-    
-
-    if train_config.estimator=='FFT':
-        rr_estimates=estimate_rr_fft(signal, RR_GT_list, train_config)
-    elif train_config.estimator=='Peak':
-        rr_estimates=estimate_rr_peak_detection(signal, RR_GT_list, train_config)
-    else:
-        print('No such estimatory')
-        exit()
-
-
+    rr_estimator=RR_Estimator(train_config, imu_pattern2, GT_RR_predictions)
+    rr_estimates = rr_estimator.estimate(train_config.estimator)
     time_points = np.arange(0, 50, 10)
 
-    mse = mean_squared_error(RR_GT_list, rr_estimates)
-    r_squared = r_squared(RR_GT_list, rr_estimates)
+    GT_RR_list=GT_RR_list[:-1]
 
-
+    mae=mean_absolute_error(GT_RR_list, rr_estimates)
+    print('mae:',mae)
+    exit()
     print('axis {0} | MSE: {1}'.format(train_config.axis, mse))
     print('r_squared:', r_squared)
 
     train_len=int(len(rr_estimates)*0.7)
     print('l:', train_len)
-
-
-    start=0
 
 
     input_len=len(rr_estimates)//3
@@ -213,208 +108,289 @@ if 'imu' in train_config.dataset_dir.lower():
     fold=0
     raw_maes=[]
     maes=[]
-    for i in range(0,30,10):
-        train_data=[]
-        train_label=[]
-        test_data=[]
-        test_label=[]
-        clf = Ridge(alpha=0.1)
-        fold+=1    
-        for j in range(0,len(rr_estimates),input_len):
-            
-            data=np.asarray(rr_estimates[j:j+input_len])
-            label=np.asarray(RR_GT_list[j:j+input_len])
 
-            if i==j:
-                test_data.append(data)
-                test_label.append(label)
-            else:
-                train_data.append(data)
-                train_label.append(label)
-
-        test_data=np.asarray(test_data)
-        test_label =np.asarray(test_label)
-
-        train_data = np.asarray(train_data)    
-        train_label = np.asarray(train_label)
+    train_data=[]
+    train_label=[]
+    test_data=[]
+    test_label=[]
+    clf = Ridge(alpha=0.1)
+    fold+=1    
+    for j in range(0,len(rr_estimates),input_len):
         
-        clf.fit(train_data, train_label)
-        pred = clf.predict(test_data)
-        raw_mse = mean_squared_error(test_label, test_data)
-        raw_mae = mean_absolute_error(test_label, test_data)
-        raw_maes.append(raw_mae)
-        mse = mean_squared_error(test_label, pred)
-        mae = mean_absolute_error(test_label, pred)
-        maes.append(mae)
-        print('=====Fold {0}====='.format(fold))
-        print('raw mse:',raw_mse)
-        print('mse:',mse)
-        print('raw mae:', raw_mae)
-        print('mae:', mae)
+        data=np.asarray(rr_estimates[j:j+input_len])
+        label=np.asarray(GT_RR_list[j:j+input_len])
 
-    print('mean mae /std')
-    mean_raw_mae = round(np.mean(raw_maes),2)
-    raw_mae_std = round(np.std(raw_maes), 2)
-    mean_mae= round(np.mean(maes),2)
-    mean_std =round(np.std(maes),2)
-    print('mean raw mae')
-    print(round(np.mean(raw_maes),2), raw_mae_std)
-    print('mean mae')
-    print(round(np.mean(maes),2), mean_std)
+        if i==j:
+            test_data.append(data)
+            test_label.append(label)
+        else:
+            train_data.append(data)
+            train_label.append(label)
+
+    test_data=np.asarray(test_data)
+    test_label =np.asarray(test_label)
+
+    train_data = np.asarray(train_data)    
+    train_label = np.asarray(train_label)
+    
+    clf.fit(train_data, train_label)
+    pred = clf.predict(test_data)
+    raw_mse = mean_squared_error(test_label, test_data)
+    raw_mae = mean_absolute_error(test_label, test_data)
+    raw_maes.append(raw_mae)
+    mse = mean_squared_error(test_label, pred)
+    mae = mean_absolute_error(test_label, pred)
+    maes.append(mae)
+    print('=====Fold {0}====='.format(fold))
+    print('raw mse:',raw_mse)
+    print('mse:',mse)
+    print('raw mae:', raw_mae)
+    print('mae:', mae)
 
 
+    exit()
     with open('results.csv', train_config.w_mode) as f:
         if train_config.w_mode=='w':
             f.write('ma window, long window size, triangle size,  mean mae, mean std\n')
         f.write(str(train_config.ma_window)+','+str(train_config.long_window_size)+','+str(train_config.triangle_w_size)+','+str(mean_mae)+','+str(mean_std)+'\n')
 
     f.close()
+
+if 'imu' in train_config.dataset_dir.lower():
     
-    print('File written')
-    print(train_data.shape, test_data.shape)
-    print(train_label.shape, test_label.shape)
-    exit()
+    axis=train_config.axis
+    
+    imu_pattern1=data[0]
+    GT_RR_list=data[1]
+    imu_pattern2=data[2]
+    gt_rrs_pattern2=data[3]
+    
+    imu_pattern1_signal=imu_pattern1[axis]
+    imu_pattern2_signal=imu_pattern2[axis]
+
+    signal=imu_pattern1_signal
+    GT_RR_predictor = Ridge(alpha=0.1)
+
+    signal_np = np.asarray(signal)
+    GT_RR_np = np.asarray(GT_RR_list)
+    
+    signal_np=signal_np.reshape(GT_RR_np.shape[0],-1)
+    
+    GT_RR_predictor.fit(signal_np, GT_RR_np)    
+    
+    if train_config.triangle_filter:
+        signal = triangle_filter(signal, train_config)
+    
+    if train_config.pattern2:
+        cross_domain_evaluate(imu_pattern2_signal, gt_rrs_pattern2,GT_RR_predictor)
+    else:
+        #todo: train GT_RR_predictor with inputs to outputs of signal, GT_RR
+        print(GT_RR_np.shape)
+        print(signal_np.shape)
+        GT_RR_predictions = GT_RR_predictor.predict(signal_np)
+        
+        print(GT_RR_list)
+        print(GT_RR_predictions)
+        
+        if train_config.adaptive_bp:
+            arg_GT_RR_list=GT_RR_predictions
+        else:
+            arg_GT_RR_list=GT_RR_list
+         
+        # if train_config.estimator=='FFT':
+            # rr_estimates=estimate_rr_fft(signal, GT_RR_predictions, train_config)
+        # elif train_config.estimator=='Peak':
+            # rr_estimates=estimate_rr_peak_detection(signal, GT_RR_predictions, train_config)
+        # else:
+            # print('No such estimatory')
+            # exit()
+        
+        rr_estimator=RR_Estimator(train_config, signal, GT_RR_predictions)
+        rr_estimates = rr_estimator.estimate(train_config.estimator)
+        time_points = np.arange(0, 50, 10)
+
+        mse = mean_squared_error(GT_RR_list, rr_estimates)
+        r_squared = r_squared(GT_RR_list, rr_estimates)
 
 
+        print('axis {0} | MSE: {1}'.format(train_config.axis, mse))
+        print('r_squared:', r_squared)
+
+        train_len=int(len(rr_estimates)*0.7)
+        print('l:', train_len)
+
+
+        start=0
+
+
+        input_len=len(rr_estimates)//3
+
+        target=0
+        fold=0
+        raw_maes=[]
+        maes=[]
+        for i in range(0,30,10):
+            train_data=[]
+            train_label=[]
+            test_data=[]
+            test_label=[]
+            clf = Ridge(alpha=0.1)
+            fold+=1    
+            for j in range(0,len(rr_estimates),input_len):
+                
+                data=np.asarray(rr_estimates[j:j+input_len])
+                label=np.asarray(GT_RR_list[j:j+input_len])
+
+                if i==j:
+                    test_data.append(data)
+                    test_label.append(label)
+                else:
+                    train_data.append(data)
+                    train_label.append(label)
+
+            test_data=np.asarray(test_data)
+            test_label =np.asarray(test_label)
+
+            train_data = np.asarray(train_data)    
+            train_label = np.asarray(train_label)
+            
+            clf.fit(train_data, train_label)
+            pred = clf.predict(test_data)
+            raw_mse = mean_squared_error(test_label, test_data)
+            raw_mae = mean_absolute_error(test_label, test_data)
+            raw_maes.append(raw_mae)
+            mse = mean_squared_error(test_label, pred)
+            mae = mean_absolute_error(test_label, pred)
+            maes.append(mae)
+            print('=====Fold {0}====='.format(fold))
+            print('raw mse:',raw_mse)
+            print('mse:',mse)
+            print('raw mae:', raw_mae)
+            print('mae:', mae)
+
+        print('mean mae /std')
+        mean_raw_mae = round(np.mean(raw_maes),2)
+        raw_mae_std = round(np.std(raw_maes), 2)
+        mean_mae= round(np.mean(maes),2)
+        mean_std =round(np.std(maes),2)
+        print('mean raw mae')
+        print(round(np.mean(raw_maes),2), raw_mae_std)
+        print('mean mae')
+        print(round(np.mean(maes),2), mean_std)
+
+
+        with open('results.csv', train_config.w_mode) as f:
+            if train_config.w_mode=='w':
+                f.write('ma window, long window size, triangle size,  mean mae, mean std\n')
+            f.write(str(train_config.ma_window)+','+str(train_config.long_window_size)+','+str(train_config.triangle_w_size)+','+str(mean_mae)+','+str(mean_std)+'\n')
+
+        f.close()
     
 
-    fig, axis = plt.subplots(2,3, figsize=(16,5))
-
-    axis[0,0].plot(time_points, RR_GT_list, label='RR GT',color='#1f77b4')
-    axis[0,0].plot(time_points, accelx_rr_estimates, label='RR esti.', color='#d62728')
-    axis[0,0].set_title('Estimation is from accelX')
-
-    axis[0,1].plot(time_points, RR_GT_list, label='RR GT', color='#1f77b4')
-    axis[0,1].plot(time_points, accely_rr_estimates, color='#d62728')
-    axis[0,1].set_title('Estimation is from accelY')
-
-    axis[0,2].plot(time_points, RR_GT_list, label='RR GT', color='#1f77b4')
-    axis[0,2].plot(time_points, accelz_rr_estimates, label='RR esti.', color='#d62728')
-    axis[0,2].set_title('Estimation is from accelZ')
-
-
-    axis[1,0].plot(time_points, RR_GT_list, label='RR GT', color='#1f77b4')
-    axis[1,0].plot(time_points, gyrox_rr_estimates, label='RR esti.', color='#d62728')
-    axis[1,0].set_title('Estimation is from gyroX')
-
-    axis[1,1].plot(time_points, RR_GT_list, label='RR GT', color='#1f77b4')
-    axis[1,1].plot(time_points, gyroy_rr_estimates, label='RR esti.', color='#d62728')
-    axis[1,1].set_title('Estimation is from gyroY')
-
-    axis[1,2].plot(time_points, RR_GT_list, label='RR GT', color='#1f77b4')
-    axis[1,2].plot(time_points, gyroz_rr_estimates, label='RR esti.', color='#d62728')
-    axis[1,2].set_title('Estimation is from gyroZ')
-
-
-
-    # Create custom legend lines with thickened lines
-    legend_lines = [Line2D([0], [0], color='#1f77b4', lw=5),   # Blue line in legend, thickened
-                    Line2D([0], [0], color='#d62728', lw=5)]  # Orange line in legend, thickened
-
-    plt.legend(handles=legend_lines, labels=['RR GT', 'RR esti.'], loc='upper right', handlelength=3, fontsize=10, bbox_to_anchor=(1.36,1))
-
-    # axis[0,0].set_ylabel('Respiratory rate (RR) (beats per minute)')
-
-    fig.text(0.5, 0.5, 'Time (s)', ha='center', fontsize=12)  # For top row (0,x)
-    fig.text(0.5, 0.02, 'Time (s)', ha='center', fontsize=12)  # For bottom row (1,x)
-
-    # fig.text(0.1, 0.5, 'Respiratory rate (BPM)', va='center', rotation='vertical', fontsize=12)  # Shared y-label
-
-    fig.supylabel('Respiratory rate (BPM)')
-
-    # plt.tight_layout(rect=[0.01, 0.01, 0.01, 0.95])  # Leave space on the left for y-label
-
-    plt.tight_layout(pad=2.0)
-    plt.savefig('rr.png')
-    plt.show()
-    print(len(time_points))
-    print(len(RR_GT_list))
 
 elif 'mic' in train_config.dataset_dir.lower():
-    
+
     times=data[0]
     sensors = data[1]
     GTs=data[2]
     
+    train_config.fs = 500
     #slice sensors by 10 seconds
     time_step=10*train_config.fs
     print('len:', len(sensors))
     
     sensor_segments=[]
     GT_segments=[]
-    for i in range(0,time_step*(len(sensors)//time_step), time_step):
-        print(i,i+time_step)
-        sensor_segment = sensors[i:i+time_step]
-        GT_segment = GTs[i:i+time_step]
+    
+    window_size=2*train_config.fs
+    n_iter = len(GTs)//window_size
 
-        sensor_segments.append(sensor_segment)
-        GT_segments.append(GT_segment)
+    hr_gts=[]
+    for i in range(n_iter):
+        GT_segment = GTs[i*window_size:(i+1)*window_size]
+        min_distance = int(train_config.fs * 0.5)
+        peaks, _ = find_peaks(GT_segment, distance=min_distance, prominence=0.2)
+        hr_bpm = (len(peaks)/window_size) * 60 
+        hr_gts.append(hr_bpm)
 
-    print('time:', len(times), len(sensors), len(GTs))
+    in_ear_signal_list=[]
+    for i in range(len(hr_gts)):
+        in_ear_seg = sensors[i*window_size:(i+1)*window_size]
+        # in_ear_seg=compute_smoothed_hilbert(in_ear_seg,train_config.fs)
+        in_ear_signal_list.append(in_ear_seg)
 
-    heart_rate_labels=[]
-    for i in range(3):
-        print('======Fold {0}======'.format(i+1))
-        r_peaks, rr_intervals, heart_rates = get_heart_rate(GT_segments[i],train_config)
 
-        # Print results
-        print("R-peaks (indices):", r_peaks)
-        print("R-R intervals (s):", rr_intervals)
-        print("Heart rate (bpm):", heart_rates)
-        print('r_peaks:', len(r_peaks), len(heart_rates))
-        
-        print("Average heart rate:", np.mean(heart_rates))
-        print('len:', len(heart_rates))
-        heart_rate_labels.append(heart_rates[:13])
 
     #train ridge regression with input sensor and label heart rates
     clf = Ridge(alpha=0.1)
 
     
     #train and evaluate
-    fold=1
+    n_folds=3
     maes=[]
     preds=[]
     labels=[]
+    print('len:', len( in_ear_signal_list))
     for i in range(3):        
+        print('=========Fold {0}========='.format(i+1))
         train_X=[]
         train_y=[]
         test_X=[]
         test_y=[]
+        size = len(in_ear_signal_list)//n_folds
+
+        flag=0
         for j in range(3):
-            current_sensor=sensor_segments[j]
-            current_heart_rate = heart_rate_labels[j]
+            start_idx = j*size
+            end_idx = (j+1)*size
+            # print('f:', flag)
+            if flag==1:
+                start_idx+=1
+                end_idx+=1
+            
             if j==i:
-                test_X.append(current_sensor)
-                test_y.append(current_heart_rate)
+                end_idx=end_idx+1
+                print(start_idx,end_idx)
+                current_in_ear_seg = in_ear_signal_list[start_idx:end_idx]
+                current_hr_gts = hr_gts[start_idx:end_idx]
+                test_X.extend(current_in_ear_seg)
+                test_y.extend(current_hr_gts)
+                flag=1
             else:
-                train_X.append(current_sensor)
-                train_y.append(current_heart_rate)
-        
+                
+                current_in_ear_seg = in_ear_signal_list[start_idx:end_idx]
+                current_hr_gts = hr_gts[start_idx:end_idx]
+                print(start_idx,end_idx)
+                train_X.extend(current_in_ear_seg)
+                train_y.extend(current_hr_gts)
+
+
         train_X=np.asarray(train_X)
         train_y=np.asarray(train_y)
         test_X=np.asarray(test_X)
         test_y=np.asarray(test_y)
+        print('train:', train_X.shape, train_y.shape)
+        print('test:', test_X.shape, test_y.shape)
 
-        labels.append(test_y[0])
+
         print(train_X.shape, train_y.shape)
         print(test_X.shape, test_y.shape)
         clf.fit(train_X, train_y)
-        pred = clf.predict(test_X)
-        # pred=pred[0]
-
-        preds.append(pred[0])
-        mse = mean_squared_error(test_y, pred)
+        preds = clf.predict(test_X)
+        
+        print(test_y)
+        print(preds)
+        mse = mean_squared_error(test_y, preds)
         # raw_mae=mean_absolute_error(test_y, test_X)
-        mae = mean_absolute_error(test_y, pred)
+        mae = mean_absolute_error(test_y, preds)
         maes.append(mae)
-        print('=====Fold {0}====='.format(i+1))
         print('mse:',mse)
         print('mae:', mae)
         # print('raw mae:', raw_mae)
-        
+    
+
     print('mean mae /std')
-    print(round(np.mean(maes),2), round(np.std(maes),2))
+    print(round(np.mean(maes),2), round(np.std(maes),4))
     
 
     

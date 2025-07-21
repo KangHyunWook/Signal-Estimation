@@ -6,6 +6,7 @@ def get_config(**optional_kwargs):
     parser.add_argument('--dataset_dir', default = r"C:\workspace\NYUAD\MIC_1000gain_facingEarCanal.csv")
     parser.add_argument('--sampling_rate', type=int, default=1000)
     parser.add_argument('--mode', default='train')
+    parser.add_argument('--GT_RR_path', type=str, default=r"C:\workspace\NYUAD\RR_GT.csv")
     
     parser.add_argument('--lowcut', type=float, default=0.1)
     parser.add_argument('--highcut', type=float, default=0.5)
@@ -22,5 +23,6 @@ def get_config(**optional_kwargs):
     parser.add_argument('--estimator', required=True, type=str, default='FFT', help='Choice: FFT, Peak, Zero-crossing, hybrid')
     parser.add_argument('--window_sec', type=int, default=10)
     parser.add_argument('--adaptive_bp', action='store_true')
+    parser.add_argument('--pattern2', action='store_true')
     
     return parser.parse_args()

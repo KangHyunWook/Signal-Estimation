@@ -1,5 +1,25 @@
+import os
+
 class IMU:
     def __init__(self, config):
+        
+        self.config=config
+        
+        items=os.listdir(config.dataset_dir)
+        items = sorted(items)
+        
+        pattern1_imu_path=os.path.join(config.dataset_dir,items[2])
+        pattern1_GT_RR_path=os.path.join(config.dataset_dir,items[0])
+        
+        pattern2_imu_path=os.path.join(config.dataset_dir,items[3])
+        pattern2_GT_RR_path=os.path.join(config.dataset_dir,items[1])
+        
+        
+        self.imu_pattern1, self.GT_RRs_pattern1 = self.preprocess(pattern1_imu_path, pattern1_GT_RR_path)
+        self.imu_pattern2, self.GT_RRs_pattern2 = self.preprocess(pattern2_imu_path, pattern2_GT_RR_path)
+        
+    def preprocess(self, IMU_PATH, GT_RR_PATH):
+        
         imu_signal=[]
         accelX_list=[]
         accelY_list=[]
@@ -8,7 +28,7 @@ class IMU:
         gyroY_list=[]
         gyroZ_list=[]
 
-        for line in open(config.dataset_dir):
+        for line in open(IMU_PATH):
             line=line.strip()
             splits = line.split(',')    
             
@@ -16,8 +36,6 @@ class IMU:
                 continue
             
             accelx = float(splits[0])
-            
-
             accely = float(splits[1])
             accelz = float(splits[2])
             gyrox = float(splits[3])
@@ -44,10 +62,28 @@ class IMU:
         self.gyroX_list=gyroX_list = gyroX_list[:thres]
         self.gyroY_list=gyroY_list = gyroY_list[:thres]
         self.gyroZ_list=gyroZ_list = gyroZ_list[:thres]
-    
-    def get_data(self):
-        return (self.accelX_list, self.accelY_list, self.accelZ_list, 
+        imu = (self.accelX_list, self.accelY_list, self.accelZ_list, 
                     self.gyroX_list, self.gyroY_list, self.gyroZ_list)
+        
+        
+        #get GT RRs
+        
+        GT_RR_list=[]
+
+        cnt=0
+        for line in open(GT_RR_PATH):
+            line = line.strip()
+            splits = line.split(',')
+            if splits[0]=='time':
+                continue
+            if cnt<30:
+                GT_RR_list.append(float(splits[1]))
+            cnt+=1
+        
+        return [imu,GT_RR_list]
+                    
+    def get_data(self):
+        return [self.imu_pattern1, self.GT_RRs_pattern1, self.imu_pattern2, self.GT_RRs_pattern2]
     
     
 class MIC:
